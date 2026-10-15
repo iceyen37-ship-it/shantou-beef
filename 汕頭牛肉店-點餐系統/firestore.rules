@@ -1,0 +1,70 @@
+rules_version = '2';
+
+// 貼到 Firebase 主控台 → Firestore Database →「規則」分頁，按「發布」。
+// 只要改一個地方：下面 STAFF 名單換成你的員工 Email（全部小寫），可以放好幾個。
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isStaff() {
+      return request.auth != null
+        && request.auth.token.email in ['[員工Email，例如 boss@gmail.com]'];
+    }
+
+    // 營業設定（售完、暫停接單、每碗分鐘）：誰都能讀，只有員工能改
+    match /settings/{id} {
+      allow read: if true;
+      allow write: if isStaff();
+    }
+
+    // 每日計數器（取餐序號、累計碗數）：誰都能讀；
+    // 顧客只能「序號 +1」而且必須同時建立對應的那張訂單
+    function counterBumpOk(day, s, bin, bout) {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['serial', 'bowlsIn', 'bowlsOut'])
+        && d.serial == s + 1
+        && d.bowlsOut == bout
+        && d.bowlsIn > bin && d.bowlsIn <= bin + 40
+        && existsAfter(/databases/$(database)/documents/orders/$(day + '-' + string(d.serial)));
+    }
+    match /counters/{day} {
+      allow read: if true;
+      allow create: if counterBumpOk(day, 0, 0, 0);
+      allow update: if isStaff()
+        || counterBumpOk(day, resource.data.serial, resource.data.bowlsIn, resource.data.bowlsOut);
+    }
+
+    // 訂單：顧客可以新增、可以用序號查自己那張；只有員工能看全部、改狀態
+    // 價格 80 和品項 pork / lamb 要跟 firebase-config.js 一致
+    function validOrder(id) {
+      let d = request.resource.data;
+      let c = getAfter(/databases/$(database)/documents/counters/$(d.day)).data;
+      return d.keys().hasOnly(['day', 'serial', 'pork', 'lamb', 'nick', 'dine', 'age', 'note', 'total', 'bowlsBefore', 'status', 'createdAt'])
+        && d.keys().hasAll(['day', 'serial', 'pork', 'lamb', 'nick', 'dine', 'age', 'note', 'total', 'bowlsBefore', 'status', 'createdAt'])
+        && d.day is string && d.day.matches('^[0-9]{8}$')
+        && d.serial is int && id == d.day + '-' + string(d.serial)
+        && d.pork is int && d.lamb is int
+        && d.pork >= 0 && d.lamb >= 0 && d.pork <= 20 && d.lamb <= 20
+        && d.pork + d.lamb > 0
+        && d.total == (d.pork + d.lamb) * 80
+        && d.nick is string && d.nick.size() > 0 && d.nick.size() <= 10
+        && d.dine in ['內用', '外帶']
+        && d.age is string && d.age.size() <= 10
+        && d.note is string && d.note.size() <= 60
+        && d.bowlsBefore is int
+        && d.status == 'new'
+        && d.createdAt == request.time
+        && c.serial == d.serial
+        && c.bowlsIn == d.bowlsBefore + d.pork + d.lamb;
+    }
+    match /orders/{id} {
+      allow get: if true;
+      allow list: if isStaff();
+      allow create: if validOrder(id);
+      allow update: if isStaff()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'discount'])
+        && request.resource.data.status in ['new', 'cooking', 'ready', 'done', 'cancelled']
+        && (!('discount' in request.resource.data) || request.resource.data.discount in ['none', 'half', 'free']);
+      allow delete: if isStaff();
+    }
+  }
+}
