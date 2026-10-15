@@ -47,8 +47,26 @@ $("#login").addEventListener("submit", async (e) => {
   const st = STAFF[Number($("#staff").value)];
   if (!st) { $("#loginErr").textContent = "請先選擇員工。"; return; }
   // Firebase 密碼至少 6 碼，所以實際密碼 = 輸入的密碼 + PW_SUFFIX
-  try { await signInWithEmailAndPassword(auth, st.email, $("#pw").value + PW_SUFFIX); }
-  catch (ex) { $("#loginErr").textContent = "登入失敗，請確認員工和密碼。"; }
+  const pw = $("#pw").value;
+  // 員工只要輸入短密碼（例如 123）；不小心連 #stb 一起打也照樣能登入
+  const tries = pw.endsWith(PW_SUFFIX) ? [pw] : [pw + PW_SUFFIX, pw];
+  let last = null;
+  for (const t of tries) {
+    if (t.length < 6) continue;
+    try { await signInWithEmailAndPassword(auth, st.email, t); return; } catch (ex) { last = ex; }
+  }
+  const code = (last && last.code) || "";
+  const why = {
+    "auth/invalid-credential": "員工或密碼不對，或 Firebase 裡還沒建立這個員工帳號",
+    "auth/wrong-password": "密碼不對",
+    "auth/user-not-found": "Firebase 裡還沒建立這個員工帳號",
+    "auth/operation-not-allowed": "Firebase 還沒開啟「電子郵件/密碼」登入方式",
+    "auth/unauthorized-domain": "Firebase「已授權的網域」還沒加入這個網站",
+    "auth/too-many-requests": "嘗試太多次，請稍等幾分鐘再試",
+    "auth/network-request-failed": "網路連不上，請檢查網路",
+    "auth/invalid-api-key": "firebase-config.js 的 apiKey 不對"
+  }[code] || "請確認員工和密碼";
+  $("#loginErr").textContent = "登入失敗：" + why + (code ? `（${code}）` : "");
 });
 $("#logout").onclick = () => signOut(auth);
 
