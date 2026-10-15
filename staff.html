@@ -20,8 +20,8 @@
 <div class="wrap">
   <form id="login" class="login" hidden>
     <h1>員工登入</h1>
-    <div class="field"><label for="email">Email</label><input class="inp" id="email" type="email" autocomplete="username" required></div>
-    <div class="field"><label for="pw">密碼</label><input class="inp" id="pw" type="password" autocomplete="current-password" required></div>
+    <div class="field"><label for="staff">選擇員工</label><select class="inp" id="staff" required></select></div>
+    <div class="field"><label for="pw">密碼</label><input class="inp" id="pw" type="password" inputmode="numeric" autocomplete="current-password" required></div>
     <div class="err" id="loginErr" role="alert"></div>
     <button class="btn" type="submit">登入</button>
   </form>
@@ -33,17 +33,22 @@
 import { doc, collection, query, where, onSnapshot, runTransaction, setDoc, updateDoc, increment } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { app, fs, AGE, STATUS, today, pad, esc, $, bowls, active, DEFAULT_SETTINGS } from "./common.js";
-import { MENU, SHOP_NAME } from "./firebase-config.js";
+import { MENU, SHOP_NAME, STAFF } from "./firebase-config.js";
 
 const auth = getAuth(app);
 let DAY = today();
 let orders = [], settings = { ...DEFAULT_SETTINGS }, sound = false, prevNew = null, unsubs = [];
 $("#brand").textContent = SHOP_NAME + "・後台";
 
+const PW_SUFFIX = "#stb";
+$("#staff").innerHTML = '<option value="" disabled selected>請選擇</option>' + STAFF.map((x, i) => `<option value="${i}">${esc(x.name)}</option>`).join("");
 $("#login").addEventListener("submit", async (e) => {
   e.preventDefault(); $("#loginErr").textContent = "";
-  try { await signInWithEmailAndPassword(auth, $("#email").value.trim(), $("#pw").value); }
-  catch (ex) { $("#loginErr").textContent = "登入失敗，請確認 Email 和密碼。"; }
+  const st = STAFF[Number($("#staff").value)];
+  if (!st) { $("#loginErr").textContent = "請先選擇員工。"; return; }
+  // Firebase 密碼至少 6 碼，所以實際密碼 = 輸入的密碼 + PW_SUFFIX
+  try { await signInWithEmailAndPassword(auth, st.email, $("#pw").value + PW_SUFFIX); }
+  catch (ex) { $("#loginErr").textContent = "登入失敗，請確認員工和密碼。"; }
 });
 $("#logout").onclick = () => signOut(auth);
 
@@ -51,7 +56,8 @@ onAuthStateChanged(auth, (u) => {
   unsubs.forEach((f) => f()); unsubs = [];
   $("#login").hidden = !!u; $("#who").hidden = !u; $("#view-staff").hidden = !u; $("#banner").hidden = true;
   if (!u) return;
-  $("#whoName").textContent = u.email;
+  const me = STAFF.find((x) => x.email === (u.email || "").toLowerCase());
+  $("#whoName").textContent = me ? me.name : u.email;
   start();
 });
 
